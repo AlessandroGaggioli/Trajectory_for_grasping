@@ -42,11 +42,6 @@ int main(int argc,char **argv) {
             main_object.state_force_field(); 
             break ; 
         }
-        case(trajectory_for_grasping::MacchinaStati::State::STOP): {
-            
-            main_object.state_stop() ; 
-            break ; 
-        }
         case(trajectory_for_grasping::MacchinaStati::WAITBUTTON): {
             main_object.state_wait_button() ; 
             break ; 

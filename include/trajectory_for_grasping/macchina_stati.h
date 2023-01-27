@@ -35,7 +35,6 @@ namespace trajectory_for_grasping
             OBJECT_DEFINITION,
             TRAJECTORY_CALCULATION,
             FORCE_FIELD,
-            STOP,
             WAIT_BUTTON
         } ;
 
@@ -62,7 +61,6 @@ namespace trajectory_for_grasping
         void state_object_definition() ; 
         void state_trajectory_calculation() ; 
         void state_force_field() ; 
-        void state_stop() ; 
         void state_wait_button() ;
 
         private: 

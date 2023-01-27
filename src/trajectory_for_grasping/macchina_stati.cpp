@@ -423,14 +423,9 @@ namespace trajectory_for_grasping {
         }
         else if(haptic_grey==1) {
             this->state=WAIT_BUTTON ; 
-            //this->return_state=STOP  ;  ????
             this->return_state=INIT ; 
         }
     }
-
-    void MacchinaStati::state_stop() {
-        std::cout <<"\nSTOP\n" ; 
-      }
 
     void MacchinaStati::get_franka_prec() {
         tf2::StampedTransform transform ; 
