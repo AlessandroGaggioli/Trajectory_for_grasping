@@ -3,7 +3,7 @@
 
 namespace trajectory_for_grasping {
 
-    MacchinaStati::MacchinaStati(){ //costruttore
+    MacchinaStati::MacchinaStati():tfListener(tfBuffer){ //costruttore
         this->state=INIT ; 
         this->return_state=WAIT_BUTTON ; 
         this->initializeRos() ; 
@@ -14,11 +14,21 @@ namespace trajectory_for_grasping {
         this->Offset.resize(3) ; 
         this->BezierCurve.resize(Npunti) ; 
         for(int i=0;i<Npunti;i++) {
-            BezierCurve[i].resize(3) ; 
+            BezierCurve[i].resize(7) ; 
         }
         this->pos_fin.resize(7) ; 
         this->point_force.resize(7) ; 
         this->force.force_direction.resize(3) ; 
+        this->stopping_force.force_direction.resize(3) ; 
+        this->stopping_point_force.resize(3) ; 
+        this->start_force=true  ;
+        this->stop_force=true  ;
+        this->count_start=0 ; 
+        this->count_stop=0 ; 
+        this->stop_gain=1 ; 
+        this->start_gain=1 ;
+        this->save_grey=true ; 
+        this->save_white=true ; 
     }
 
     MacchinaStati::~MacchinaStati(){ //distruttore
@@ -125,8 +135,8 @@ namespace trajectory_for_grasping {
     }   
 
     double isteresi(double a) {
-        if(a> 2.5) a = 2.5 ; 
-        else if(a<-2.5) a = -2.5 ; 
+        if(a> 1.5) a = 1.5 ; 
+        else if(a<-1.5) a = -1.5 ; 
     return a ; 
     }
 
@@ -247,8 +257,6 @@ namespace trajectory_for_grasping {
     void MacchinaStati::state_read_position() { ////FARE TF2 LISTENER PER LA POSIZIONE PRECEDENTE!
             std::cout <<"\nREAD POSITION\n" ; 
 
-            bool loop = true ;
-            while(loop) {
             geometry_msgs::TransformStamped transformStamped ;
             try{
                     transformStamped = tfBuffer.lookupTransform("panda_link0","panda_EE",ros::Time(0)) ;   
@@ -256,7 +264,7 @@ namespace trajectory_for_grasping {
             catch (tf2::TransformException &ex) {
                     ROS_WARN("%s",ex.what()) ; 
                     ros::Duration(1.0).sleep() ; 
-                    continue ; 
+                    return;
             } 
 
                 this->franka_pose[0] = transformStamped.transform.translation.x ;
@@ -266,10 +274,6 @@ namespace trajectory_for_grasping {
                 this->franka_pose[4] = transformStamped.transform.rotation.y  ;
                 this->franka_pose[5] = transformStamped.transform.rotation.z ;
                 this->franka_pose[6] = transformStamped.transform.rotation.w ; 
-
-                loop = false ; 
-            
-            }
 
             //Mapping posizioni haptic
             Haptic_pose = MappingPosition(haptic_joints) ; 
@@ -312,18 +316,6 @@ namespace trajectory_for_grasping {
         send_pose.pose.orientation.z = Haptic_pose[5] ; 
         send_pose.pose.orientation.w = Haptic_pose[6] ; 
 
-        /*std::cout <<"\nHaptic_pose\n" ; 
-        for(int i=0;i<7;i++) std::cout <<Haptic_pose[i] <<std::endl ; 
-
-        std::cout <<"\nFranka_send\n" ; 
-        std::cout <<send_pose.pose.position.x <<std::endl ;
-        std::cout <<send_pose.pose.position.y <<std::endl ;
-        std::cout <<send_pose.pose.position.z <<std::endl ;
-        std::cout <<send_pose.pose.orientation.x <<std::endl ; 
-        std::cout <<send_pose.pose.orientation.y <<std::endl ;
-        std::cout <<send_pose.pose.orientation.z <<std::endl ;
-        std::cout <<send_pose.pose.orientation.w <<std::endl ;*/
-
         pub_franka_pose.publish(send_pose) ; 
 
         if(this->haptic_white==1) {
@@ -336,6 +328,15 @@ namespace trajectory_for_grasping {
         std::cout <<"\nOBJECT DEFINITION\n" ; 
         // inserire qui definizione obiettivo 
         this->state=TRAJECTORY_CALCULATION ;
+
+        this->pos_fin[0]=0.574101 ;
+        this->pos_fin[1]=-0.218974 ; 
+        this->pos_fin[2]=0.0277725; 
+        this->pos_fin[3]=-0.999 ; 
+        this->pos_fin[4]=-0.008 ; 
+        this->pos_fin[5]=-0.0206 ; 
+        this->pos_fin[6]=0.02161 ;
+
     }
 
 
@@ -350,21 +351,36 @@ namespace trajectory_for_grasping {
 
         this->ComputeBezier() ; 
 
-        // invio su rviz tf punti della curva calcolati
-        static tf::TransformBroadcaster br ; 
-        tf::Transform transform ; 
-        std::string str="BezierCurve" ; 
+        //mappo le posizioni della curva dallo spazio di lavoro del robot a quello dell'haptic, sottraendo l'offset
+
         for(int i=0;i<Npunti;i++) {
-            ros::Time time=ros::Time::now() ; 
-            transform.setOrigin(tf::Vector3(this->BezierCurve[i][0],this->BezierCurve[i][1],this->BezierCurve[i][2])) ; 
-            str += std::to_string(i) ; 
-            br.sendTransform(tf::StampedTransform(transform,time,"panda_link0",str)) ; 
-            str="BezierCurve" ; 
+            for(int j=0;j<3;j++) {
+                this->BezierCurve[i][j] -= this->Offset[j] ; 
+            }
         }
+
+        for(int i=0;i<Npunti;i++) {
+            for(int j=0;j<3;j++) {
+                if(j==0) BezierCurve[i][j] = BezierCurve[i][2] ; 
+                else if(j==1) BezierCurve[i][j] = BezierCurve[i][0] ; 
+                else if(j==2) BezierCurve[i][j] = BezierCurve[i][1]  ; 
+            }
+        }
+
+        this->point_force=nearest_point(this->BezierCurve,Npunti,this->Haptic_pose) ; //calcola il punto della curva più vicino rispetto a dove si trova il robot
+
+        this->force.force_module = Force_Module(this->Haptic_pose,this->point_force) ; //calcola modulo della forza 
+        
+        for(int i=0;i<3;i++) {
+            this->force.force_direction[i]=(this->point_force[i]-this->Haptic_pose[i])/ two_points_distance(this->Haptic_pose,this->point_force) ; //calcola la direzione della forza 
+        }
+
+        count_start =0 ;
+        start_force = true ; 
+        start_gain=1 ; 
 
         this->state=FORCE_FIELD ; 
 
-        
     }
 
 
@@ -388,19 +404,20 @@ namespace trajectory_for_grasping {
 
         pub_franka_pose.publish(send_pose) ; //invio le posizioni al robot
 
-        //mappo le posizioni della curva dallo spazio di lavoro del robot a quello dell'haptic, sottraendo l'offset
-        for(int i=0;i<Npunti;i++) {
-            for(int j=0;j<3;j++) {
-                this->BezierCurve[i][j] -= this->Offset[j] ; 
-            }
-        }
 
-        this->point_force=nearest_point(this->BezierCurve,Npunti,this->Haptic_pose) ; //calcola il punto della curva più vicino rispetto a dove si trova il robot
-
-        this->force.force_module = Force_Module(this->Haptic_pose,this->point_force) ; //calcola modulo della forza 
+         // invio su rviz tf punti della curva calcolati
         
-        for(int i=0;i<3;i++) {
-            this->force.force_direction[i]=(this->point_force[i]-this->Haptic_pose[i])/ two_points_distance(this->Haptic_pose,this->point_force) ; //calcola la direzione della forza 
+        static tf::TransformBroadcaster br ; 
+        tf::Transform transform ; 
+        std::string str="BezierCurve" ; 
+        for(int i=0;i<Npunti;i++) {
+            ros::Time time=ros::Time::now() ; 
+            transform.setOrigin(tf::Vector3(this->BezierCurve[i][0],this->BezierCurve[i][1],this->BezierCurve[i][2])) ; 
+            tf::Quaternion q(BezierCurve[i][3],BezierCurve[i][4],BezierCurve[i][5],BezierCurve[i][6]); 
+            transform.setRotation(q) ; 
+            str += std::to_string(i) ; 
+            br.sendTransform(tf::StampedTransform(transform,time,"panda_link0",str)) ; 
+            str="BezierCurve" ; 
         }
 
         geomagic_control::OmniFeedback force_msg ; 
@@ -408,9 +425,28 @@ namespace trajectory_for_grasping {
         force_msg.force.x= isteresi(this->force.force_module * this->force.force_direction[0]) ; 
         force_msg.force.y= isteresi(this->force.force_module * this->force.force_direction[1]) ; 
         force_msg.force.z= isteresi(this->force.force_module * this->force.force_direction[2]) ; 
-        force_msg.position.x=this->point_force[0]  
-        force_msg.position.x=this->point_force[1]  
-        force_msg.position.x=this->point_force[2] 
+        force_msg.position.x=this->point_force[0]  ;
+        force_msg.position.x=this->point_force[1]  ;
+        force_msg.position.x=this->point_force[2]  ;
+
+        for(int i=0;i<3;i++) {
+            this->stopping_force.force_direction[i] = force.force_direction[i] ; 
+            this->stopping_point_force[i] = point_force[i] ; 
+        }
+        this->stopping_force.force_module = force.force_module ; 
+
+       
+
+        while(start_force) {
+
+            force_msg.force.x= force_msg.force.x * start_gain ; 
+            force_msg.force.y= force_msg.force.y * start_gain ; 
+            force_msg.force.z= force_msg.force.z * start_gain ; 
+
+            count_start++ ; 
+            start_gain += 0.001 ; 
+            if(count_start==999) start_force = false ; 
+        }
 
         force_msg.lock.resize(3) ; 
         for(int i=0;i<3;i++) force_msg.lock[i] = 0 ; 
@@ -419,37 +455,78 @@ namespace trajectory_for_grasping {
 
         if(haptic_white==1) {
             this->state=WAIT_BUTTON ; 
-            this->return_state=CONNECT_HAPTIC_FRANKA ; 
+            this->return_state=STOP_FORCE ; 
+            stop_force = true ; 
+            stop_gain=1 ; 
+            count_stop=0  ; 
+            save_white = true ; 
         }
         else if(haptic_grey==1) {
             this->state=WAIT_BUTTON ; 
-            this->return_state=INIT ; 
+            this->return_state=STOP_FORCE ;
+            stop_force = true ; 
+            stop_gain=1 ; 
+            count_stop=0 ;
+            save_grey =true ; 
         }
     }
 
+    void MacchinaStati::state_stop_force() {
+
+        geomagic_control::OmniFeedback force_msg ; 
+
+        while(stop_force) {
+            force_msg.force.x= stop_gain*(isteresi(this->stopping_force.force_module * this->stopping_force.force_direction[0])) ; 
+            force_msg.force.y= stop_gain*(isteresi(this->stopping_force.force_module * this->stopping_force.force_direction[1])) ; 
+            force_msg.force.z= stop_gain*(isteresi(this->stopping_force.force_module * this->stopping_force.force_direction[2])) ; 
+
+            force_msg.position.x=this->stopping_point_force[0]  ;
+            force_msg.position.y=this->stopping_point_force[1]  ;
+            force_msg.position.z=this->stopping_point_force[2]  ;
+            
+            force_msg.lock.resize(3) ; 
+            for(int i=0;i<3;i++) force_msg.lock[i] = 0 ; 
+
+            this->pub_force_feedback.publish(force_msg) ; 
+
+            count_stop++ ; 
+            stop_gain -= 0.001 ; 
+            if(count_stop==999) stop_force =false ; 
+        }
+
+        if(!stop_force) {
+            this->state=WAIT_BUTTON ; 
+            if(save_white) this->return_state=CONNECT_HAPTIC_FRANKA ; 
+            else if(save_grey) this->return_state=INIT ; 
+
+            save_grey = false ; 
+            save_white = false ; 
+        }
+
+    }
+    
     void MacchinaStati::get_franka_prec() {
-        tf2::StampedTransform transform ; 
 
-        bool loop = true ; 
-        while(loop) {
-        try{
-            this->tfListener.lookupTransform("panda_link0","panda_EE",ros::Time(0),transform) ; 
-        }
-        catch(tf2::TransformException ex) {
-            ROS_ERROR("%s"ex.what()) ; 
-            ros::Duration(1.0).sleep() ;
-            continue ; 
-        }
 
-        this->franka_prec[0] = transform.translation.x ;
-        this->franka_prec[1] = transform.translation.y ;
-        this->franka_prec[2] = transform.translation.z ; 
-        this->franka_prec[3] = transform.rotation.x ;
-        this->franka_prec[4] = transform.rotation.y  ;
-        this->franka_prec[5] = transform.rotation.z ;
-        this->franka_prec[6] = transform.rotation.w ; 
+        geometry_msgs::TransformStamped transformStamped ;
+            try{
+                    transformStamped = tfBuffer.lookupTransform("panda_link0","panda_EE",ros::Time(0)) ;   
+                }
+            catch (tf2::TransformException &ex) {
+                    ROS_WARN("%s",ex.what()) ; 
+                    ros::Duration(1.0).sleep() ; 
+                   return ; 
+            } 
 
-        loop = false ; 
-        }
+        this->franka_prec[0] = transformStamped.transform.translation.x ;
+        this->franka_prec[1] = transformStamped.transform.translation.y ;
+        this->franka_prec[2] = transformStamped.transform.translation.z ; 
+        this->franka_prec[3] = transformStamped.transform.rotation.x ;
+        this->franka_prec[4] = transformStamped.transform.rotation.y  ;
+        this->franka_prec[5] = transformStamped.transform.rotation.z ;
+        this->franka_prec[6] = transformStamped.transform.rotation.w ; 
+
+
+
     }
 }

@@ -3,6 +3,7 @@
 int main(int argc,char **argv) {
     
     ros::init(argc,argv,"macchina_stati") ;
+    ros::NodeHandle main_node ; 
     ros::Rate loop_rate(50);
 
     trajectory_for_grasping::MacchinaStati main_object ;
@@ -42,7 +43,11 @@ int main(int argc,char **argv) {
             main_object.state_force_field(); 
             break ; 
         }
-        case(trajectory_for_grasping::MacchinaStati::WAITBUTTON): {
+        case(trajectory_for_grasping::MacchinaStati::State::STOP_FORCE):{
+            main_object.state_stop_force() ; 
+            break;
+        }
+        case(trajectory_for_grasping::MacchinaStati::WAIT_BUTTON): {
             main_object.state_wait_button() ; 
             break ; 
         }

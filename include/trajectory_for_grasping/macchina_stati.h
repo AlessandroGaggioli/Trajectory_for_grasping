@@ -35,7 +35,8 @@ namespace trajectory_for_grasping
             OBJECT_DEFINITION,
             TRAJECTORY_CALCULATION,
             FORCE_FIELD,
-            WAIT_BUTTON
+            WAIT_BUTTON,
+            STOP_FORCE
         } ;
 
         State state ; 
@@ -62,6 +63,7 @@ namespace trajectory_for_grasping
         void state_trajectory_calculation() ; 
         void state_force_field() ; 
         void state_wait_button() ;
+        void state_stop_force() ; 
 
         private: 
 
@@ -75,7 +77,7 @@ namespace trajectory_for_grasping
         ros::Publisher pub_force_feedback ; 
 
         tf2_ros::Buffer tfBuffer ; 
-        tf2_ros::TransformListener tfListener(tf2_ros::Buffer tfBuffer) ; 
+        tf2_ros::TransformListener tfListener; 
 
         std::vector<double> haptic_joints ; 
         std::vector<double> franka_pose ; 
@@ -89,25 +91,36 @@ namespace trajectory_for_grasping
         coefficients coeff_Bezier ;
 
         std::vector<double> point_force ; 
+        std::vector<double> stopping_point_force ; 
 
         Force force ; 
+        Force stopping_force ; 
 
         State return_state ; 
 
         int haptic_grey;
         int haptic_white;
+
+        bool start_force ;
+        bool stop_force ;
+        int count_start ; 
+        int count_stop ; 
+        double stop_gain ;  
+        double start_gain ; 
+        bool save_grey ; 
+        bool save_white ; 
         
         //private methods
         void GeomagicJointsCallback(const sensor_msgs::JointState& msg) ;
         void ButtonsCallback(const geomagic_control::PhantomButtonEvent& button_msg);
 
         Eigen::MatrixXd MDH(double theta,double alfa,double d,double a) ; 
-        std::vector<double> MappingPosition(std::vector<double> haptic_joint) ; 
+       /* std::vector<double> MappingPosition(std::vector<double> haptic_joint) ; 
         std::vector<double> OffsetPosition(std::vector<double> robot_pos,std::vector<double> haptic_pos) ; 
         std::vector<double> nearest_point(std::vector<std::vector<double>> Curve,int n_points,std::vector<double> EndEffector) ; 
         double Force_Module(std::vector<double> A,std::vector<double> B) ; 
         double isteresi(double a) ; 
-        double two_points_distance(std::vector<double> A,std::vector<double> B) ; 
+        double two_points_distance(std::vector<double> A,std::vector<double> B) ; */
         void calc_coefficients() ;  
         void ComputeBezier()  ;
 
